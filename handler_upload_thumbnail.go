@@ -1,84 +1,99 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
+	videoID_string := r.PathValue("videoID")
+	videoID, err := uuid.Parse(r.PathValue("videoID"))
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
+		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
 		return
 	}
 
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
+		respondWithError(w, http.StatusUnauthorized, "Missing bearer token", err)
 		return
 	}
 
 	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
+		respondWithError(w, http.StatusUnauthorized, "Invalid JWT", err)
 		return
 	}
 
-	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
+	fmt.Println("Uploading thumbnail for video:", videoID, "by user:", userID)
 
-	// TODO: implement the upload here
 	const maxMemory = 10 << 20
-	r.ParseMultipartForm(maxMemory)
+	if err := r.ParseMultipartForm(maxMemory); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid form data", err)
+		return
+	}
+
 	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
-		fmt.Println(err)
+		respondWithError(w, http.StatusBadRequest, "Missing thumbnail file", err)
 		return
 	}
+	defer file.Close()
 
-	tndata, err := io.ReadAll(file)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+	//_, err = io.ReadAll(file)
+	// if err != nil {
+	// 	respondWithError(w, http.StatusInternalServerError, "Failed to read thumbnail", err)
+	// 	return
+	// }
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Video owner not found", err)
+		respondWithError(w, http.StatusNotFound, "Video not found", err)
 		return
 	}
 
-	tn := &thumbnail{
-		data:      tndata,
-		mediaType: header.Header.Get("Content-Type"),
+	fmt.Println("----------assetlogic start-------------------")
+
+	//encodedImage := base64.StdEncoding.EncodeToString(tndata)
+	fileextension := header.Header.Get("Content-Type")
+	slice := strings.Split(fileextension, "/")
+	fileextension = slice[1]
+	fmt.Println(fileextension)
+
+	thumbnailPath := (filepath.Join(cfg.assetsRoot, videoID_string+"."+fileextension))
+	thumbnail, err := os.Create(thumbnailPath)
+
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
-
-	// videoThumbnails[video.ID] = *tn
-	fmt.Println("---------------")
-	port := os.Getenv("PORT")
-	if port == "" {
-		log.Fatal("PORT environment variable is not set")
+	_, err = io.Copy(thumbnail, file)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
+	//	dataURL := "data:" + header.Header.Get("Content-Type") + ";base64," + encodedImage
+	assetURL := "http://localhost:" + cfg.port + "/" + thumbnailPath
+	// n := len(dataURL)
+	// fmt.Println(n)
+	// fmt.Println(dataURL[n-5:])
+	// fmt.Println(dataURL[:30])
 
-	encoded_image := base64.StdEncoding.EncodeToString(tndata)
-	fmt.Println(encoded_image[:8])
-	fmt.Print("=====================================")
+	fmt.Println("----------assetlogic end-------------------")
 
-	dataURL := "data:" + tn.mediaType + ";base64," + encoded_image
-	// url := "http://localhost:" + port + "/api/thumbnails/" + videoIDString
+	fmt.Println(assetURL)
 
-	fmt.Println(dataURL[:8])
-	video.ThumbnailURL = &dataURL
+	video.ThumbnailURL = &assetURL
 
 	if err := cfg.db.UpdateVideo(video); err != nil {
-		fmt.Println(err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to update video thumbnail", err)
 		return
 	}
 
