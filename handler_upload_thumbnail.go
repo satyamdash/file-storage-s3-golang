@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
 	videoID_string := r.PathValue("videoID")
+	fmt.Println(videoID_string)
 	videoID, err := uuid.Parse(r.PathValue("videoID"))
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
@@ -67,7 +70,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	fileextension = slice[1]
 	fmt.Println(fileextension)
 
-	thumbnailPath := (filepath.Join(cfg.assetsRoot, videoID_string+"."+fileextension))
+	key := make([]byte, 32)
+	rand.Read(key)
+	encoded_random_id := base64.StdEncoding.EncodeToString(key)
+
+	thumbnailPath := (filepath.Join(cfg.assetsRoot, encoded_random_id+"."+fileextension))
 	thumbnail, err := os.Create(thumbnailPath)
 
 	if err != nil {
